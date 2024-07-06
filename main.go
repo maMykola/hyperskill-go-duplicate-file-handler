@@ -1,8 +1,26 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
 
 func main() {
-	// Write your code solution for the project below.
-	fmt.Println("Hello, World!")
+	if len(os.Args) < 2 {
+		fmt.Println("Directory is not specified")
+		return
+	}
+
+	filepath.Walk(os.Args[1], func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			fmt.Println(path)
+		}
+
+		return nil
+	})
 }
