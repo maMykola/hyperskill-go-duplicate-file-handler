@@ -290,7 +290,7 @@ func getFileNumbers(total int) []int {
 			numbers = append(numbers, num)
 		}
 
-		if ok {
+		if ok && len(numbers) > 0 {
 			return numbers
 		}
 
