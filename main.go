@@ -8,16 +8,23 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
 
 type SortOrder int
 
-type Duplicate struct {
+type FileInfo struct {
+	Size int64
+	Path string
+}
+
+type GroupInfo struct {
 	Size  int64
 	Hash  string
 	Files []string
+	Index uint
 }
 
 const (
@@ -32,15 +39,22 @@ func main() {
 	}
 
 	format := getFileFormat()
-	direction := getSortDirection()
-	data := getData(os.Args[1], format)
+	files := getFiles(os.Args[1], format)
 
-	sortSizes(data, direction)
-	showSizeInfo(data)
+	filesBySize := groupBySize(files)
+	sortFiles(filesBySize)
+	showSizes(filesBySize)
 
-	if checkDuplicates() {
-		showDuplicates(data)
+	if !checkDuplicates() {
+		return
 	}
+
+	duplicates := getDuplicates(filesBySize)
+	if len(*duplicates) == 0 {
+		return
+	}
+
+	showDuplicates(duplicates)
 }
 
 func getFileFormat() (ext string) {
@@ -48,6 +62,58 @@ func getFileFormat() (ext string) {
 	fmt.Println("Enter file format:")
 	fmt.Scanln(&ext)
 	return
+}
+
+func getFiles(root, format string) *[]FileInfo {
+	var files []FileInfo
+
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() && isValidFormat(path, format) {
+			files = append(files, FileInfo{Size: info.Size(), Path: path})
+		}
+
+		return nil
+	})
+
+	return &files
+}
+
+func isValidFormat(path string, format string) bool {
+	return format == "" || strings.TrimPrefix(filepath.Ext(path), ".") == format
+}
+
+func sortFiles(files *[]GroupInfo) {
+	direction := getSortDirection()
+
+	sort.Slice(*files, func(i, j int) bool {
+		if direction == sortDesc {
+			return (*files)[i].Size > (*files)[j].Size
+		}
+		return (*files)[i].Size < (*files)[j].Size
+	})
+}
+
+func groupBySize(data *[]FileInfo) *[]GroupInfo {
+	var groups map[int64][]string
+	var duplicates []GroupInfo
+
+	groups = make(map[int64][]string)
+
+	for _, info := range *data {
+		groups[info.Size] = append(groups[info.Size], info.Path)
+	}
+
+	for size, files := range groups {
+		if len(files) > 1 {
+			duplicates = append(duplicates, GroupInfo{Size: size, Files: files})
+		}
+	}
+
+	return &duplicates
 }
 
 func getSortDirection() (sort SortOrder) {
@@ -69,47 +135,8 @@ func getSortDirection() (sort SortOrder) {
 	}
 }
 
-func getData(root, format string) *[]Duplicate {
-	duplicates := make(map[int64][]string)
-
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if !info.IsDir() && isValidFormat(path, format) {
-			size := info.Size()
-			duplicates[size] = append(duplicates[size], path)
-		}
-
-		return nil
-	})
-
-	data := make([]Duplicate, 0, len(duplicates))
-	for size, files := range duplicates {
-		if len(files) > 1 {
-			data = append(data, Duplicate{Size: size, Files: files})
-		}
-	}
-
-	return &data
-}
-
-func isValidFormat(path string, format string) bool {
-	return format == "" || strings.TrimPrefix(filepath.Ext(path), ".") == format
-}
-
-func sortSizes(data *[]Duplicate, direction SortOrder) {
-	sort.Slice(*data, func(i, j int) bool {
-		if direction == sortDesc {
-			return (*data)[i].Size > (*data)[j].Size
-		}
-		return (*data)[i].Size < (*data)[j].Size
-	})
-}
-
-func showSizeInfo(data *[]Duplicate) {
-	for _, info := range *data {
+func showSizes(files *[]GroupInfo) {
+	for _, info := range *files {
 		fmt.Println()
 		fmt.Printf("%d bytes\n", info.Size)
 		for _, filename := range info.Files {
@@ -139,41 +166,37 @@ func checkDuplicates() bool {
 	}
 }
 
-func showDuplicates(data *[]Duplicate) {
-	var i = 0
+func getDuplicates(filesBySize *[]GroupInfo) *[]GroupInfo {
+	var hashes []string
+	var groupsByHash = make(map[string]GroupInfo)
+	var duplicates []GroupInfo
 
-	for _, info := range *data {
-		duplicates := findDuplicates(info.Files)
-		if len(duplicates) == 0 {
-			continue
-		}
+	for _, info := range *filesBySize {
+		for _, filename := range info.Files {
+			hash := getFileHash(filename)
 
-		fmt.Println()
-		fmt.Printf("%d bytes\n", info.Size)
-		for _, duplicate := range duplicates {
-			fmt.Printf("Hash: %s\n", duplicate.Hash)
-			for _, filename := range duplicate.Files {
-				i++
-				fmt.Printf("%d. %s\n", i, filename)
+			if !slices.Contains(hashes, hash) {
+				hashes = append(hashes, hash)
 			}
-		}
-	}
-}
 
-func findDuplicates(files []string) (duplicates []Duplicate) {
-	hashedFiles := make(map[string][]string)
-	for _, filename := range files {
-		hash := getFileHash(filename)
-		hashedFiles[hash] = append(hashedFiles[hash], filename)
-	}
+			group, ok := groupsByHash[hash]
+			if !ok {
+				group = GroupInfo{Size: info.Size, Hash: hash}
+			}
 
-	for hash, hf := range hashedFiles {
-		if len(hf) > 1 {
-			duplicates = append(duplicates, Duplicate{Hash: hash, Files: hf})
+			group.Files = append(group.Files, filename)
+			groupsByHash[hash] = group
 		}
 	}
 
-	return
+	for _, hash := range hashes {
+		group := groupsByHash[hash]
+		if len(group.Files) > 1 {
+			duplicates = append(duplicates, group)
+		}
+	}
+
+	return &duplicates
 }
 
 func getFileHash(filename string) string {
@@ -189,4 +212,25 @@ func getFileHash(filename string) string {
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func showDuplicates(data *[]GroupInfo) {
+	var size int64 = -1
+	var i uint = 1
+
+	for gi, group := range *data {
+		if size != group.Size {
+			fmt.Println()
+			fmt.Printf("%d bytes\n", group.Size)
+		}
+
+		// save index for later
+		(*data)[gi].Index = i
+
+		fmt.Printf("Hash: %s\n", group.Hash)
+		for _, filename := range group.Files {
+			fmt.Printf("%d. %s\n", i, filename)
+			i++
+		}
+	}
 }
