@@ -229,6 +229,7 @@ func showDuplicates(data *[]GroupInfo) {
 		if size != group.Size {
 			fmt.Println()
 			fmt.Printf("%d bytes\n", group.Size)
+			size = group.Size
 		}
 
 		// save index for later
