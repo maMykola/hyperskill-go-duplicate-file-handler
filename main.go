@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -24,7 +26,7 @@ type GroupInfo struct {
 	Size  int64
 	Hash  string
 	Files []string
-	Index uint
+	Index int
 }
 
 const (
@@ -45,7 +47,7 @@ func main() {
 	sortFiles(filesBySize)
 	showSizes(filesBySize)
 
-	if !checkDuplicates() {
+	if !confirm("Check for duplicates?") {
 		return
 	}
 
@@ -55,13 +57,18 @@ func main() {
 	}
 
 	showDuplicates(duplicates)
+
+	if !confirm("Delete files?") {
+		return
+	}
+
+	deleteFiles(duplicates)
 }
 
-func getFileFormat() (ext string) {
+func getFileFormat() string {
 	fmt.Println()
 	fmt.Println("Enter file format:")
-	fmt.Scanln(&ext)
-	return
+	return getString()
 }
 
 func getFiles(root, format string) *[]FileInfo {
@@ -145,14 +152,14 @@ func showSizes(files *[]GroupInfo) {
 	}
 }
 
-func checkDuplicates() bool {
+func confirm(prompt string) bool {
 	var answer string
 
 	for {
 		fmt.Println()
-		fmt.Println("Check for duplicates?")
+		fmt.Println(prompt)
 
-		fmt.Scanln(&answer)
+		answer = getString()
 
 		switch answer {
 		case "yes":
@@ -216,7 +223,7 @@ func getFileHash(filename string) string {
 
 func showDuplicates(data *[]GroupInfo) {
 	var size int64 = -1
-	var i uint = 1
+	var i int = 1
 
 	for gi, group := range *data {
 		if size != group.Size {
@@ -233,4 +240,81 @@ func showDuplicates(data *[]GroupInfo) {
 			i++
 		}
 	}
+}
+
+func deleteFiles(data *[]GroupInfo) {
+	var numFiles = getNumFiles(data)
+	var filesToDelete = getFileNumbers(numFiles)
+	var size int64
+
+	for _, pos := range filesToDelete {
+		info := getFileInfo(data, pos)
+		os.Remove(info.Path)
+		size += info.Size
+	}
+
+	fmt.Println()
+	fmt.Printf("Total freed up space: %d bytes\n", size)
+}
+
+func getNumFiles(data *[]GroupInfo) (total int) {
+	for _, group := range *data {
+		total += len(group.Files)
+	}
+	return
+}
+
+func getFileNumbers(total int) []int {
+	var input string
+	var numbers []int
+
+	for {
+		fmt.Println()
+		fmt.Println("Enter file numbers to delete:")
+
+		input = getString()
+		numbers = numbers[:0] // reset length
+
+		scanner := bufio.NewScanner(strings.NewReader(input))
+		scanner.Split(bufio.ScanWords)
+
+		ok := true
+		for scanner.Scan() {
+			num, err := strconv.Atoi(scanner.Text())
+			if err != nil || num > total {
+				ok = false
+				break
+			}
+
+			numbers = append(numbers, num)
+		}
+
+		if ok {
+			return numbers
+		}
+
+		fmt.Println()
+		fmt.Println("Wrong format")
+	}
+}
+
+func getFileInfo(data *[]GroupInfo, pos int) FileInfo {
+	for _, group := range *data {
+		if pos-group.Index >= len(group.Files) {
+			continue
+		}
+
+		return FileInfo{
+			Size: group.Size,
+			Path: group.Files[pos-group.Index],
+		}
+	}
+
+	panic("Something went wrong")
+}
+
+func getString() string {
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	return scanner.Text()
 }
